@@ -2,6 +2,7 @@ import uuid
 from typing import Optional, List, Dict
 
 from .database import get_connection, init_db, DEFAULT_DB_PATH
+from typing import Any
 
 
 class CategoryRepository:
@@ -131,3 +132,54 @@ def bootstrap(db_path: str = DEFAULT_DB_PATH) -> None:
     init_db(db_path)
     cat_repo = CategoryRepository(db_path)
     cat_repo.ensure(None, "Não categorizado")
+
+
+class ImportBatchRepository:
+    def __init__(self, db_path: str = DEFAULT_DB_PATH):
+        self.db_path = db_path
+
+    def create_batch(self, id: str, source: Optional[str] = None, notes: Optional[str] = None) -> None:
+        conn = get_connection(self.db_path)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO import_batches (id, source, notes) VALUES (?, ?, ?)",
+                (id, source, notes),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_counts(self, id: str, rows_parsed: int = None, inserted: int = None, failed: int = None) -> None:
+        conn = get_connection(self.db_path)
+        try:
+            cur = conn.cursor()
+            updates = []
+            params: list[Any] = []
+            if rows_parsed is not None:
+                updates.append("rows_parsed = ?")
+                params.append(rows_parsed)
+            if inserted is not None:
+                updates.append("inserted = ?")
+                params.append(inserted)
+            if failed is not None:
+                updates.append("failed = ?")
+                params.append(failed)
+            if not updates:
+                return
+            params.append(id)
+            q = "UPDATE import_batches SET " + ", ".join(updates) + " WHERE id = ?"
+            cur.execute(q, tuple(params))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_batch(self, id: str) -> Optional[Dict]:
+        conn = get_connection(self.db_path)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT id, source, rows_parsed, inserted, failed, notes, created_at FROM import_batches WHERE id = ?", (id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()

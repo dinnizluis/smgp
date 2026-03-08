@@ -36,6 +36,18 @@ _SCHEMA = [
     """
     CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
     """,
+    # import batch metadata
+    """
+    CREATE TABLE IF NOT EXISTS import_batches (
+        id TEXT PRIMARY KEY,
+        source TEXT,
+        rows_parsed INTEGER DEFAULT 0,
+        inserted INTEGER DEFAULT 0,
+        failed INTEGER DEFAULT 0,
+        notes TEXT,
+        created_at DATETIME DEFAULT (CURRENT_TIMESTAMP)
+    );
+    """,
 ]
 
 
