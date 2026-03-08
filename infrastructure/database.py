@@ -2,6 +2,7 @@ import os
 import sqlite3
 from pathlib import Path
 from typing import Iterator
+from contextlib import contextmanager
 
 
 DEFAULT_DB_PATH = os.path.join("data", "smgp.db")
@@ -40,8 +41,16 @@ _SCHEMA = [
 
 def _ensure_data_dir(db_path: str) -> None:
     p = Path(db_path)
-    if not p.parent.exists():
-        p.parent.mkdir(parents=True, exist_ok=True)
+    parent = p.parent
+    # if parent exists and is a file -> cannot create directory
+    if parent.exists() and not parent.is_dir():
+        raise OSError(f"Cannot create data directory, path exists and is not a directory: {parent}")
+    # create if missing
+    created = False
+    if not parent.exists():
+        parent.mkdir(parents=True, exist_ok=True)
+        created = True
+    return created
 
 
 def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
@@ -76,6 +85,7 @@ def get_connection(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+@contextmanager
 def connection_context(db_path: str = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     """Context manager-like helper para usar em `with` (via yield).
 
