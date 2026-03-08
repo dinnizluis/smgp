@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ us-05-importar-arquivo-csv ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 

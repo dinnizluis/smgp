@@ -9,7 +9,8 @@ if str(ROOT) not in sys.path:
 
 import streamlit as st
 from importers.csv_importer import parse_csv, InvalidCSVError
-from infrastructure.repositories import TransactionRepository, CategoryRepository, bootstrap
+from infrastructure.repositories import TransactionRepository, CategoryRepository, ImportBatchRepository, bootstrap
+import uuid
 import pandas as pd
 
 
@@ -46,6 +47,16 @@ def main():
 			cat_repo = CategoryRepository()
 			default_cat = cat_repo.ensure(None, "Não categorizado")
 
+			# create import batch metadata (minimal)
+			batch_repo = ImportBatchRepository()
+			batch_id = uuid.uuid4().hex
+			source = getattr(uploaded, "name", "upload_streamlit")
+			try:
+				batch_repo.create_batch(batch_id, source=source)
+			except Exception:
+				# fail-safe: don't block persistence if batch metadata fails
+				batch_id = None
+
 			inserted = 0
 			skipped = 0
 			for t in rows:
@@ -54,6 +65,13 @@ def main():
 					inserted += 1
 				else:
 					skipped += 1
+
+			# update batch counts if created
+			if batch_id:
+				try:
+					batch_repo.update_counts(batch_id, rows_parsed=len(rows), inserted=inserted, failed=skipped)
+				except Exception:
+					pass
 
 			st.success(f"Persistido: {inserted} — Ignorados (duplicados): {skipped}")
 
