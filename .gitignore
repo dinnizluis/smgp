@@ -3,7 +3,8 @@
 venv/
 
 # Local data files (do not commit SQLite DBs)
-data/
+# ignore contents of data but allow explicit exceptions
+data/*
 !data/category_rules.json.example
 
 # Python
