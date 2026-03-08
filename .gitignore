@@ -1,5 +1,19 @@
+# Virtual environments
+.venv/
 venv/
+
+# Local data files (do not commit SQLite DBs)
+data/
+
+# Python
 __pycache__/
 *.pyc
-*.db
+
+# pytest cache
+.pytest_cache/
+
+# macOS
 .DS_Store
+
+# Editor directories
+.vscode/

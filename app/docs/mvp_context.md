@@ -28,11 +28,13 @@ A aplicação será:
 
 # **2. Stack Tecnológica**
 
-- Python 3.10+
-- Streamlit (UI)
-- SQLite (persistência local)
-- Pandas (manipulação de dados)
-- VS Code + Copilot
+ - Python 3.10+
+ - Streamlit (UI)
+ - SQLite (persistência local)
+     - Local DB file: `data/smgp.db` (persistência local do MVP)
+     - Inicialização: usar `infrastructure.database.init_db(db_path)` para criar o arquivo e aplicar o esquema
+ - Pandas (manipulação de dados)
+ - VS Code + Copilot
 
 Não usar:
 
