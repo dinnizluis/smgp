@@ -8,6 +8,7 @@ if str(ROOT) not in sys.path:
 	sys.path.insert(0, str(ROOT))
 
 import streamlit as st
+import altair as alt
 from importers.csv_importer import parse_csv, InvalidCSVError
 from infrastructure.repositories import TransactionRepository, CategoryRepository, ImportBatchRepository, bootstrap
 from application.use_cases import (
@@ -173,24 +174,57 @@ def main():
 
 			df_cat['total'] = df_cat.apply(adjust_total, axis=1)
 
-			# prepare chart data: sort by absolute value (magnitude) and take top N (8)
+			# prepare chart and table data: compute magnitude and pct, then sort both
 			try:
 				_chart_df = df_cat.copy()
 				_chart_df['abs_total'] = _chart_df['total'].abs()
 				_chart_df = _chart_df.sort_values('abs_total', ascending=False)
+				# total magnitude across visible categories (for pct calculation)
+				total_magnitude = _chart_df['abs_total'].sum()
+				if total_magnitude > 0:
+					_chart_df['pct'] = (_chart_df['abs_total'] / total_magnitude) * 100.0
+				else:
+					_chart_df['pct'] = 0.0
+
+				# map pct and abs_total back into df_cat so the displayed table matches the chart
+				pct_map = dict(zip(_chart_df['category'], _chart_df['pct']))
+				abs_map = dict(zip(_chart_df['category'], _chart_df['abs_total']))
+				df_cat['abs_total'] = df_cat['category'].map(abs_map).fillna(0)
+				df_cat['pct'] = df_cat['category'].map(pct_map)
+
+				# sort df_cat by magnitude descending for display
+				df_cat = df_cat.sort_values('abs_total', ascending=False).reset_index(drop=True)
+
+				# select top N for chart (default 8)
 				_chart_top = _chart_df.head(8)
-				# use the signed `total` for the chart so incomes remain positive and
-				# expenses appear negative; ordering is by magnitude
-				chart_series = _chart_top.set_index('category')['total']
+				# build Altair chart to preserve ordering by abs_total
+				_chart_top = _chart_top.copy()
+				_chart_top = _chart_top.reset_index(drop=True)
+				chart_df = _chart_top[['category', 'total', 'pct', 'abs_total']]
 				st.subheader('Gastos por categoria (gráfico)')
-				st.bar_chart(chart_series)
+				# allow switching between absolute values and percentage view
+				chart_mode = st.radio('Exibir gráfico como', ['Valores', 'Porcentagem (%)'], index=0, horizontal=True)
+				if chart_mode == 'Porcentagem (%)':
+					# show pct on Y axis
+					chart = alt.Chart(chart_df).mark_bar().encode(
+						x=alt.X('category:N', sort=alt.SortField('abs_total', order='descending')),
+						y=alt.Y('pct:Q', axis=alt.Axis(format='%')), 
+						tooltip=[alt.Tooltip('category:N'), alt.Tooltip('pct:Q', format='.2f')],
+					).properties(width=800)
+				else:
+					chart = alt.Chart(chart_df).mark_bar().encode(
+						x=alt.X('category:N', sort=alt.SortField('abs_total', order='descending')),
+						y=alt.Y('total:Q'),
+						tooltip=[alt.Tooltip('category:N'), alt.Tooltip('total:Q', format='.2f'), alt.Tooltip('pct:Q', format='.2f')],
+					).properties(width=800)
+				st.altair_chart(chart, use_container_width=True)
 			except Exception:
-				# do not break UI if chart generation fails
+				# do not break UI if chart generation fails; keep original df_cat
 				pass
 
 			# append total row for display (sum of visible categories)
 			total_sum = df_cat['total'].sum()
-			total_row = _pd.DataFrame([{"category": "Total", "total": total_sum}])
+			total_row = _pd.DataFrame([{"category": "Total", "total": total_sum, "pct": 100.0}])
 			df_cat = _pd.concat([df_cat, total_row], ignore_index=True)
 			st.metric("Total (período)", f"{total_sum:.2f}")
 
@@ -219,6 +253,9 @@ def main():
 				st.metric("Variação vs período anterior", f"{pct}%")
 
 		st.subheader("Gastos por categoria (período)")
+		# format pct column for display
+		if 'pct' in df_cat.columns:
+			df_cat['pct'] = df_cat['pct'].apply(lambda v: f"{v:.2f}%")
 		st.dataframe(df_cat)
 	except Exception:
 		# keep UI resilient if summary computation fails
