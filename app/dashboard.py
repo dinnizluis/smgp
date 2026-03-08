@@ -147,7 +147,7 @@ def main():
 		# UI option: include uncategorized in displayed totals
 		include_uncat = st.checkbox("Incluir 'Não categorizado' nos totais", value=True)
 
-		st.subheader("Resumo semanal")
+		st.subheader("Resumo de gastos")
 		st.metric("Período", f"{summary['period_start']} → {summary['period_end']}")
 
 		# compute displayed category table according to toggles
@@ -172,6 +172,21 @@ def main():
 				return -abs(tot)
 
 			df_cat['total'] = df_cat.apply(adjust_total, axis=1)
+
+			# prepare chart data: sort by absolute value (magnitude) and take top N (8)
+			try:
+				_chart_df = df_cat.copy()
+				_chart_df['abs_total'] = _chart_df['total'].abs()
+				_chart_df = _chart_df.sort_values('abs_total', ascending=False)
+				_chart_top = _chart_df.head(8)
+				# use the signed `total` for the chart so incomes remain positive and
+				# expenses appear negative; ordering is by magnitude
+				chart_series = _chart_top.set_index('category')['total']
+				st.subheader('Gastos por categoria (gráfico)')
+				st.bar_chart(chart_series)
+			except Exception:
+				# do not break UI if chart generation fails
+				pass
 
 			# append total row for display (sum of visible categories)
 			total_sum = df_cat['total'].sum()
