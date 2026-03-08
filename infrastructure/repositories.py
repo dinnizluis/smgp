@@ -117,6 +117,17 @@ class TransactionRepository:
         finally:
             conn.close()
 
+    def update_category(self, id: str, category_id: Optional[str]) -> bool:
+        """Update the category_id of a transaction. Returns True if a row was updated."""
+        conn = get_connection(self.db_path)
+        try:
+            cur = conn.cursor()
+            cur.execute("UPDATE transactions SET category_id = ? WHERE id = ?", (category_id, id))
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
     def delete_all(self) -> None:
         conn = get_connection(self.db_path)
         try:

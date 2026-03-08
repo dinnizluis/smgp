@@ -258,6 +258,94 @@ def main():
 		if 'pct' in df_cat.columns:
 			df_cat['pct'] = df_cat['pct'].apply(lambda v: f"{(v or 0.0)*100:.2f}%")
 		st.dataframe(df_cat)
+
+		# --- Gerenciar categorização (MVP) -------------------------------------------------
+		with st.expander("Gerenciar categorização", expanded=False):
+			st.write("Ajuste manual de categorias para transações no período selecionado.")
+			only_uncat = st.checkbox("Somente Não categorizado", value=True)
+			# load transactions in the period (limited recent rows for performance)
+			tx_repo = TransactionRepository()
+			cat_repo = CategoryRepository()
+			# ensure we know the canonical id for the default 'Não categorizado' category
+			default_cat_id = cat_repo.ensure(None, "Não categorizado")
+			all_txs = tx_repo.list_all(limit=1000)
+			# filter by date range — normalize to date objects to handle DB types
+			from datetime import datetime
+			def _to_date(d):
+				if isinstance(d, date):
+					return d
+				try:
+					return datetime.fromisoformat(str(d)).date()
+				except Exception:
+					return None
+			start_dt = datetime.fromisoformat(start_iso).date()
+			end_dt = datetime.fromisoformat(end_iso).date()
+			visible = [t for t in all_txs if (_to_date(t.get('date')) is not None and _to_date(t.get('date')) >= start_dt and _to_date(t.get('date')) <= end_dt)]
+			if only_uncat:
+				# consider transactions uncategorized when they have no category_id OR
+				# when their category_id equals the default 'Não categorizado' id
+				visible = [t for t in visible if (not t.get('category_id')) or (t.get('category_id') == default_cat_id)]
+
+			if not visible:
+				st.info('Nenhuma transação encontrada para o período e filtro selecionado.')
+			else:
+				# load categories for select options
+				cats = cat_repo.list_all()
+				cat_options = [c['name'] for c in cats]
+				cat_options.insert(0, 'Não categorizado')
+				cat_options.append('Criar nova categoria...')
+
+				# collect selections in session state keys to preserve across reruns
+				selections = {}
+				new_names = {}
+				st.write('Selecione a nova categoria para cada transação e clique em Salvar alterações.')
+				for t in visible:
+					row_id = t['id']
+					cols = st.columns([1, 3, 2, 2])
+					with cols[0]:
+						st.write(t['date'])
+					with cols[1]:
+						st.write(t['description'])
+					with cols[2]:
+						st.write(f"{t['amount']:.2f}")
+					with cols[3]:
+						key = f"cat_select_{row_id}"
+						# determine current category name
+						current_name = 'Não categorizado'
+						if t.get('category_id'):
+							c = cat_repo.list_all()
+							cm = {c2['id']: c2['name'] for c2 in c}
+							current_name = cm.get(t.get('category_id'), 'Não categorizado')
+						sel = st.selectbox('', options=cat_options, index=cat_options.index(current_name) if current_name in cat_options else 0, key=key)
+						selections[row_id] = sel
+						# if create new chosen, show input
+						if sel == 'Criar nova categoria...':
+							nkey = f"cat_new_{row_id}"
+							new = st.text_input('Nome da nova categoria', key=nkey)
+							new_names[row_id] = new
+
+				if st.button('Salvar alterações'):
+					applied = 0
+					for tx_id, sel in selections.items():
+						if sel == 'Criar nova categoria...':
+							name = new_names.get(tx_id)
+							if not name:
+								continue
+							cat_id = cat_repo.ensure(None, name)
+						elif sel == 'Não categorizado':
+							cat_id = None
+						else:
+							# find id by name
+							c = cat_repo.list_all()
+							cm = {c2['name']: c2['id'] for c2 in c}
+							cat_id = cm.get(sel)
+						# apply update
+						ok = tx_repo.update_category(tx_id, cat_id)
+						if ok:
+							applied += 1
+					st.success(f"Categorias atualizadas: {applied}")
+					# refresh page to show new values
+					st.experimental_rerun()
 	except Exception:
 		# keep UI resilient if summary computation fails
 		pass
