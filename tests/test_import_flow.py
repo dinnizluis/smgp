@@ -1,4 +1,5 @@
 import os
+import io
 import tempfile
 
 from importers.csv_importer import parse_csv
@@ -6,8 +7,15 @@ from infrastructure.repositories import bootstrap, TransactionRepository
 
 
 def test_import_flow_unique_count():
-    # parse sample file
-    rows = parse_csv("data/Nubank_2025-11-07.csv")
+    # Use an embedded sample CSV for tests (avoid relying on user's private data file)
+    sample_csv = """date,title,amount
+2025-10-29,99app *99app,17.80
+2025-10-26,Ifd*Madero Industria e,56.19
+2025-10-25,Uber* Trip,17.93
+2025-10-25,Uber* Trip,17.93
+"""
+
+    rows = parse_csv(io.StringIO(sample_csv))
     # compute unique key set used by deduplication: date, amount, description
     uniques = {(t.date, t.amount, t.description) for t in rows}
 
