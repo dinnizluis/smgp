@@ -126,6 +126,46 @@ class TransactionRepository:
         finally:
             conn.close()
 
+    def sum_between(self, start_date: str, end_date: str) -> float:
+        """Return sum(amount) for transactions between start_date and end_date (inclusive)."""
+        conn = get_connection(self.db_path)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE date BETWEEN ? AND ?",
+                (start_date, end_date),
+            )
+            val = cur.fetchone()[0]
+            return float(val) if val is not None else 0.0
+        finally:
+            conn.close()
+
+    def sum_by_category_between(self, start_date: str, end_date: str) -> List[Dict]:
+        """Return list of dicts with category name and sum for transactions in range.
+
+        Result rows: {"category": name, "total": float}
+        """
+        conn = get_connection(self.db_path)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(c.name, 'Não categorizado') AS category,
+                    COALESCE(SUM(t.amount), 0) AS total
+                FROM transactions t
+                LEFT JOIN categories c ON t.category_id = c.id
+                WHERE t.date BETWEEN ? AND ?
+                GROUP BY category
+                ORDER BY total DESC
+                """,
+                (start_date, end_date),
+            )
+            rows = cur.fetchall()
+            return [{"category": r[0], "total": float(r[1])} for r in rows]
+        finally:
+            conn.close()
+
 
 def bootstrap(db_path: str = DEFAULT_DB_PATH) -> None:
     """Convenience function to initialize DB and ensure default categories."""
