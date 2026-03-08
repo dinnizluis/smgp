@@ -90,6 +90,12 @@ def _normalize_amount(amt_raw) -> float:
 	# string: remove currency symbols and thousand separators
 	if isinstance(amt_raw, str):
 		a = amt_raw.replace("R$", "").replace("$", "").strip()
+
+		# handle parentheses for negative amounts like (1,234.56)
+		neg = False
+		if a.startswith("(") and a.endswith(")"):
+			neg = True
+			a = a[1:-1].strip()
 		# both separators present: decide by last occurrence which is decimal
 		if "," in a and "." in a:
 			if a.rfind(".") > a.rfind(","):
@@ -104,7 +110,8 @@ def _normalize_amount(amt_raw) -> float:
 		# only dot present -> leave as-is (may be decimal or thousand sep without comma)
 		# remove spaces
 		a = a.replace(" ", "")
-		return float(a)
+		val = float(a)
+		return -val if neg else val
 
 	raise ValueError("amount inválido")
 
