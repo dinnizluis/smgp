@@ -153,6 +153,32 @@ def get_period_category_totals(start_date: str, end_date: str, db_path: Optional
     return repo.sum_by_category_between(start_date, end_date)
 
 
+def get_sorted_period_category_totals(
+    start_date: str,
+    end_date: str,
+    db_path: Optional[str] = None,
+    exclude_zero: bool = True,
+    top_n: Optional[int] = 8,
+) -> List[Dict]:
+    """Return period category totals sorted descending by `total`.
+
+    - `exclude_zero`: if True, remove categories with total == 0.
+    - `top_n`: limit results to top N categories (default 8 for MVP). Use None for no limit.
+    """
+    repo = TransactionRepository(db_path) if db_path else TransactionRepository()
+    rows = repo.sum_by_category_between(start_date, end_date)
+    if exclude_zero:
+        rows = [r for r in rows if float(r.get("total", 0)) != 0]
+    rows_sorted = sorted(rows, key=lambda r: float(r.get("total", 0)), reverse=True)
+    if top_n is not None:
+        try:
+            n = int(top_n)
+            rows_sorted = rows_sorted[:n]
+        except Exception:
+            pass
+    return rows_sorted
+
+
 def compute_period_preset(preset: str, today: Optional[date] = None) -> (str, str):
     """Return (start_iso, end_iso) for a named preset.
 
