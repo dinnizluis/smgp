@@ -6,9 +6,14 @@ from domain.models import Transaction
 
 
 def test_parse_valid_sample_file():
-    rows = parse_csv("data/Nubank_2025-11-07.csv")
+    sample_csv = """date,title,amount
+2025-10-29,99app *99app,17.80
+2025-10-26,Ifd*Madero Industria e,56.19
+2025-10-25,Uber* Trip,17.93
+"""
+    rows = parse_csv(io.StringIO(sample_csv))
     assert isinstance(rows, list)
-    assert len(rows) == 109
+    assert len(rows) == 3
     assert isinstance(rows[0], Transaction)
     assert rows[0].description == "99app *99app"
 
