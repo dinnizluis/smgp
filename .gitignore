@@ -4,6 +4,7 @@ venv/
 
 # Local data files (do not commit SQLite DBs)
 data/
+!data/category_rules.json.example
 
 # Python
 __pycache__/
