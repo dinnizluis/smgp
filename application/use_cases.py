@@ -28,12 +28,39 @@ def load_category_rules(path: Optional[str] = None) -> List[Dict]:
     Each rule is expected to contain: pattern (string), category (string), type ('keyword'|'regex'), priority (int)
     """
     p = Path(path) if path else DEFAULT_RULES_PATH
+
+    # If the main file doesn't exist, try the example/template next to it
     if not p.exists():
-        return []
+        alt = p.with_name(p.name + ".example")
+        if alt.exists():
+            p = alt
+        else:
+            return []
+
+    def try_load_text(text: str) -> List[Dict]:
+        try:
+            data = json.loads(text)
+            return data if isinstance(data, list) else []
+        except Exception:
+            # Try to strip common Markdown fences (```json ... ```)
+            stripped = re.sub(r"^```[a-zA-Z0-9_-]*\n", "", text)
+            stripped = re.sub(r"\n```\s*$", "", stripped)
+            try:
+                data = json.loads(stripped)
+                return data if isinstance(data, list) else []
+            except Exception:
+                return []
+
     try:
         with p.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, list) else []
+            # Prefer json.load but keep a text fallback to sanitize accidental fences
+            try:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+            except Exception:
+                f.seek(0)
+                text = f.read()
+                return try_load_text(text)
     except Exception:
         return []
 
