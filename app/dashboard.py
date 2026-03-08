@@ -182,7 +182,8 @@ def main():
 				# total magnitude across visible categories (for pct calculation)
 				total_magnitude = _chart_df['abs_total'].sum()
 				if total_magnitude > 0:
-					_chart_df['pct'] = (_chart_df['abs_total'] / total_magnitude) * 100.0
+					# pct as fraction (0.0 - 1.0) so Altair's percent formatting works
+					_chart_df['pct'] = (_chart_df['abs_total'] / total_magnitude)
 				else:
 					_chart_df['pct'] = 0.0
 
@@ -224,7 +225,7 @@ def main():
 
 			# append total row for display (sum of visible categories)
 			total_sum = df_cat['total'].sum()
-			total_row = _pd.DataFrame([{"category": "Total", "total": total_sum, "pct": 100.0}])
+			total_row = _pd.DataFrame([{"category": "Total", "total": total_sum, "pct": 1.0}])
 			df_cat = _pd.concat([df_cat, total_row], ignore_index=True)
 			st.metric("Total (período)", f"{total_sum:.2f}")
 
@@ -253,9 +254,9 @@ def main():
 				st.metric("Variação vs período anterior", f"{pct}%")
 
 		st.subheader("Gastos por categoria (período)")
-		# format pct column for display
+		# format pct column for display (convert fraction to percentage string)
 		if 'pct' in df_cat.columns:
-			df_cat['pct'] = df_cat['pct'].apply(lambda v: f"{v:.2f}%")
+			df_cat['pct'] = df_cat['pct'].apply(lambda v: f"{(v or 0.0)*100:.2f}%")
 		st.dataframe(df_cat)
 	except Exception:
 		# keep UI resilient if summary computation fails
