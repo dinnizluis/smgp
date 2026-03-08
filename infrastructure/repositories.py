@@ -54,6 +54,10 @@ class TransactionRepository:
         finally:
             conn.close()
 
+    def is_duplicate(self, date: str, amount: float, description: str) -> bool:
+        """Public wrapper for duplicate check (useful for tests)."""
+        return self._is_duplicate(date, amount, description)
+
     def insert(self, *, id: Optional[str] = None, date: str, description: str, amount: float, account_type: str, category_id: Optional[str] = None) -> bool:
         """Insert a transaction.
 
@@ -99,6 +103,25 @@ class TransactionRepository:
             cur.execute(q)
             rows = cur.fetchall()
             return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_by_id(self, id: str) -> Optional[Dict]:
+        conn = get_connection(self.db_path)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT id, date, description, amount, account_type, category_id, created_at FROM transactions WHERE id = ?", (id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def delete_all(self) -> None:
+        conn = get_connection(self.db_path)
+        try:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM transactions")
+            conn.commit()
         finally:
             conn.close()
 
