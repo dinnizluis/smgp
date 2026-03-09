@@ -8,23 +8,30 @@ from typing import Any
 class CategoryRepository:
     def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self.db_path = db_path
+    def ensure(self, id: Optional[str], name: str, created_from_batch: Optional[str] = None) -> str:
+        """Ensure a category exists. Returns category id.
 
-    def ensure(self, id: Optional[str], name: str) -> str:
-        """Ensure a category exists. Returns category id."""
-        if id is None:
-            id = uuid.uuid4().hex
+        If the category did not exist and is created now, `created_from_batch`
+        will be recorded (if provided).
+        """
         conn = get_connection(self.db_path)
         try:
             cur = conn.cursor()
-            cur.execute(
-                "INSERT OR IGNORE INTO categories (id, name) VALUES (?, ?)",
-                (id, name),
-            )
-            conn.commit()
-            # fetch id in case another row exists with same name
+            # check existing
             cur.execute("SELECT id FROM categories WHERE name = ?", (name,))
             row = cur.fetchone()
-            return row[0]
+            if row:
+                return row[0]
+
+            # create new with optional created_from_batch
+            if id is None:
+                id = uuid.uuid4().hex
+            cur.execute(
+                "INSERT INTO categories (id, name, created_from_batch) VALUES (?, ?, ?)",
+                (id, name, created_from_batch),
+            )
+            conn.commit()
+            return id
         finally:
             conn.close()
 
@@ -32,9 +39,31 @@ class CategoryRepository:
         conn = get_connection(self.db_path)
         try:
             cur = conn.cursor()
-            cur.execute("SELECT id, name, created_at FROM categories ORDER BY name")
+            cur.execute("SELECT id, name, created_at, created_from_batch FROM categories ORDER BY name")
             rows = cur.fetchall()
             return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def delete_by_name(self, name: str) -> bool:
+        """Delete a category by name. Reassigns transactions to NULL for that category.
+
+        Returns True if a category was deleted, False otherwise.
+        """
+        conn = get_connection(self.db_path)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM categories WHERE name = ?", (name,))
+            row = cur.fetchone()
+            if not row:
+                return False
+            cid = row[0]
+            # set transactions to uncategorized
+            cur.execute("UPDATE transactions SET category_id = NULL WHERE category_id = ?", (cid,))
+            # delete category
+            cur.execute("DELETE FROM categories WHERE id = ?", (cid,))
+            conn.commit()
+            return True
         finally:
             conn.close()
 
@@ -59,7 +88,7 @@ class TransactionRepository:
         """Public wrapper for duplicate check (useful for tests)."""
         return self._is_duplicate(date, amount, description)
 
-    def insert(self, *, id: Optional[str] = None, date: str, description: str, amount: float, account_type: str, category_id: Optional[str] = None) -> bool:
+    def insert(self, *, id: Optional[str] = None, date: str, description: str, amount: float, account_type: str, category_id: Optional[str] = None, batch_id: Optional[str] = None) -> bool:
         """Insert a transaction.
 
         Returns True if inserted, False if detected as duplicate and not inserted.
@@ -75,10 +104,10 @@ class TransactionRepository:
             cur = conn.cursor()
             cur.execute(
                 """
-                INSERT INTO transactions (id, date, description, amount, account_type, category_id)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO transactions (id, date, description, amount, account_type, category_id, batch_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (id, date, description, amount, account_type, category_id),
+                (id, date, description, amount, account_type, category_id, batch_id),
             )
             conn.commit()
             return True
@@ -98,7 +127,7 @@ class TransactionRepository:
         conn = get_connection(self.db_path)
         try:
             cur = conn.cursor()
-            q = "SELECT id, date, description, amount, account_type, category_id, created_at FROM transactions ORDER BY date DESC"
+            q = "SELECT id, date, description, amount, account_type, category_id, batch_id, created_at FROM transactions ORDER BY date DESC"
             if limit:
                 q += " LIMIT %d" % int(limit)
             cur.execute(q)
@@ -111,7 +140,7 @@ class TransactionRepository:
         conn = get_connection(self.db_path)
         try:
             cur = conn.cursor()
-            cur.execute("SELECT id, date, description, amount, account_type, category_id, created_at FROM transactions WHERE id = ?", (id,))
+            cur.execute("SELECT id, date, description, amount, account_type, category_id, batch_id, created_at FROM transactions WHERE id = ?", (id,))
             row = cur.fetchone()
             return dict(row) if row else None
         finally:
@@ -189,13 +218,13 @@ class ImportBatchRepository:
     def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self.db_path = db_path
 
-    def create_batch(self, id: str, source: Optional[str] = None, notes: Optional[str] = None) -> None:
+    def create_batch(self, id: str, source: Optional[str] = None, notes: Optional[str] = None, file_type: Optional[str] = None) -> None:
         conn = get_connection(self.db_path)
         try:
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO import_batches (id, source, notes) VALUES (?, ?, ?)",
-                (id, source, notes),
+                "INSERT INTO import_batches (id, source, file_type, notes) VALUES (?, ?, ?, ?)",
+                (id, source, file_type, notes),
             )
             conn.commit()
         finally:
@@ -229,7 +258,7 @@ class ImportBatchRepository:
         conn = get_connection(self.db_path)
         try:
             cur = conn.cursor()
-            cur.execute("SELECT id, source, rows_parsed, inserted, failed, notes, created_at FROM import_batches WHERE id = ?", (id,))
+            cur.execute("SELECT id, source, file_type, rows_parsed, inserted, failed, notes, created_at FROM import_batches WHERE id = ?", (id,))
             row = cur.fetchone()
             return dict(row) if row else None
         finally:

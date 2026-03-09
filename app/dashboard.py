@@ -8,6 +8,8 @@ if str(ROOT) not in sys.path:
 	sys.path.insert(0, str(ROOT))
 
 import streamlit as st
+# use wide layout so dashboard occupies full browser width
+st.set_page_config(layout="wide")
 import altair as alt
 from importers.csv_importer import parse_csv, InvalidCSVError
 from infrastructure.repositories import TransactionRepository, CategoryRepository, ImportBatchRepository, bootstrap
@@ -50,14 +52,39 @@ def guess_account_type(name: str) -> str:
 def main():
 	st.write("Importar transações via CSV")
 
-	uploaded = st.file_uploader("Escolha um arquivo CSV", type=["csv"])
+	uploaded = st.file_uploader("Escolha um arquivo CSV ou PDF (fatura)", type=["csv", "pdf"])
 
 	if uploaded is not None:
-		try:
-			rows = parse_csv(uploaded)
-		except InvalidCSVError as e:
-			st.error(f"Arquivo inválido: {e}")
-			return
+		# choose parser based on uploaded file type
+		name = getattr(uploaded, "name", "")
+		if name.lower().endswith('.pdf'):
+			# Try Itaú parser first; if it yields no rows, fall back to Nubank parser.
+			try:
+				from importers.itau_pdf_importer import parse_itau_pdf, InvalidPDFError
+				try:
+					rows = parse_itau_pdf(uploaded)
+				except InvalidPDFError:
+					rows = []
+			except Exception:
+				rows = []
+
+			if not rows:
+				try:
+					from importers.nubank_pdf_importer import parse_nubank_pdf, InvalidPDFError
+					try:
+						rows = parse_nubank_pdf(uploaded)
+					except InvalidPDFError as e:
+						st.error(f"Arquivo PDF inválido: {e}")
+						return
+				except Exception:
+					st.error("Nenhum parser PDF disponível. Instale as dependências necessárias.")
+					return
+		else:
+			try:
+				rows = parse_csv(uploaded)
+			except InvalidCSVError as e:
+				st.error(f"Arquivo inválido: {e}")
+				return
 
 		# file type dropdown: explicit choice if file is checking account or credit card invoice
 		guessed = guess_account_type(getattr(uploaded, "name", ""))
@@ -79,60 +106,138 @@ def main():
 
 		st.markdown(f"**Linhas detectadas:** {len(rows)}")
 
-		if st.button("Persistir transações"):
-			# ensure DB and default category
+		# compute inferred categories for display in preview
+		rules = load_category_rules()
+		inferred_names = [infer_category_for_transaction(t, rules) for t in rows]
+
+		# interactive preview: allow removing rows and choosing category before persisting
+		with st.expander('Pré-visualização e edição antes de persistir', expanded=False):
+			# ensure DB default category exists so we can list categories
 			bootstrap()
 			tx_repo = TransactionRepository()
 			cat_repo = CategoryRepository()
-			default_cat = cat_repo.ensure(None, "Não categorizado")
+			cats = cat_repo.list_all()
+			cat_options = ['Auto (inferir)', 'Não categorizado'] + [c['name'] for c in cats]
+			cat_options.append('Criar nova categoria...')
 
-			# load category rules (if any) to suggest categories during import
-			rules = load_category_rules()
+			st.write('Marque as transações que deseja persistir e ajuste a categoria quando necessário.')
+			include_count = 0
+			for i, t in enumerate(rows):
+				cols = st.columns([0.5, 2, 3, 1.5, 2, 2])
+				with cols[0]:
+					inc_key = f'upload_inc_{i}'
+					if inc_key not in st.session_state:
+						st.session_state[inc_key] = True
+					st.checkbox('', value=st.session_state[inc_key], key=inc_key)
+				with cols[1]:
+					st.write(t.date)
+				with cols[2]:
+					st.write(t.description)
+					# show auto-inferred category suggestion
+					inferred = inferred_names[i]
+					if inferred:
+						st.caption(f"Sugestão: {inferred}")
+				with cols[3]:
+					st.write(f"{t.amount:.2f}")
+				with cols[4]:
+					key = f'upload_cat_{i}'
+					if key not in st.session_state:
+						st.session_state[key] = 'Auto (inferir)'
+					sel = st.selectbox('', options=cat_options, index=cat_options.index(st.session_state[key]) if st.session_state[key] in cat_options else 0, key=key)
+					if sel == 'Criar nova categoria...':
+						nkey = f'upload_newcat_{i}'
+						st.text_input('Nome nova categoria', key=nkey)
 
-			# create import batch metadata (minimal)
-			batch_repo = ImportBatchRepository()
-			batch_id = uuid.uuid4().hex
-			source = getattr(uploaded, "name", "upload_streamlit")
-			try:
-				batch_repo.create_batch(batch_id, source=source)
-			except Exception:
-				# fail-safe: don't block persistence if batch metadata fails
-				batch_id = None
-
-			inserted = 0
-			skipped = 0
-			# apply selected account type to rows before persisting (override defaults)
-			for t in rows:
-				t.account_type = selected_account_type
-				# try to infer a category name, map to id, fallback to default
-				cat_name = infer_category_for_transaction(t, rules)
-				if cat_name:
-					try:
-						cat_id = cat_repo.ensure(None, cat_name)
-					except Exception:
-						cat_id = default_cat
-				else:
-					cat_id = default_cat
-				ok = tx_repo.insert(date=t.date, description=t.description, amount=t.amount, account_type=selected_account_type, category_id=cat_id)
-				if ok:
-					inserted += 1
-				else:
-					skipped += 1
-
-			# update batch counts if created
-			if batch_id:
+			# Persist selected rows with selected categories
+			if st.button('Persistir transações selecionadas'):
+				# load rules for inference
+				rules = rules
+				batch_repo = ImportBatchRepository()
+				batch_id = uuid.uuid4().hex
+				source = getattr(uploaded, 'name', 'upload_streamlit')
+				# persist chosen file type in batch metadata
 				try:
-					batch_repo.update_counts(batch_id, rows_parsed=len(rows), inserted=inserted, failed=skipped)
+					batch_repo.create_batch(batch_id, source=source, file_type=selected_file_type)
 				except Exception:
-					pass
+					# fallback: try without file_type
+					try:
+						batch_repo.create_batch(batch_id, source=source)
+					except Exception:
+						batch_id = None
 
-			st.success(f"Persistido: {inserted} — Ignorados (duplicados): {skipped}")
+				inserted = 0
+				skipped = 0
+				for i, t in enumerate(rows):
+					inc = st.session_state.get(f'upload_inc_{i}', True)
+					if not inc:
+						continue
+					# determine chosen category
+					sel = st.session_state.get(f'upload_cat_{i}', 'Auto (inferir)')
+					if sel == 'Auto (inferir)':
+						cat_name = infer_category_for_transaction(t, rules)
+						if cat_name:
+							cat_id = cat_repo.ensure(None, cat_name, created_from_batch=batch_id)
+						else:
+							cat_id = cat_repo.ensure(None, 'Não categorizado', created_from_batch=batch_id)
+					elif sel == 'Não categorizado':
+						cat_id = None
+					elif sel == 'Criar nova categoria...':
+						new = st.session_state.get(f'upload_newcat_{i}')
+						if not new:
+							cat_id = cat_repo.ensure(None, 'Não categorizado', created_from_batch=batch_id)
+						else:
+							cat_id = cat_repo.ensure(None, new, created_from_batch=batch_id)
+					else:
+						# existing category name chosen
+						cm = {c['name']: c['id'] for c in cats}
+						cat_id = cm.get(sel)
+
+					ok = tx_repo.insert(date=t.date, description=t.description, amount=t.amount, account_type=selected_account_type, category_id=cat_id, batch_id=batch_id)
+					if ok:
+						inserted += 1
+					else:
+						skipped += 1
+
+				if batch_id:
+					try:
+						batch_repo.update_counts(batch_id, rows_parsed=len(rows), inserted=inserted, failed=skipped)
+					except Exception:
+						pass
+				st.success(f'Persistido: {inserted} — Ignorados (duplicados): {skipped}')
 
 	# show weekly consolidation
 	try:
 		# allow user to choose a custom period; default is current ISO week
-		# presets
-		preset = st.selectbox("Período pré-definido", ["Custom", "current_week", "last_4_weeks", "last_month", "last_quarter", "last_6_months", "last_year"], index=1)
+		# presets (labels in PT-BR)
+		preset_options = [
+			"Personalizado",
+			"Semana atual",
+			"Semana passada",
+			"Últimas 4 semanas",
+			"Mês passado",
+			"Trimestre atual",
+			"Último trimestre",
+			"Semestre atual",
+			"Últimos 6 meses",
+			"Ano atual",
+			"Último ano",
+		]
+		preset_map = {
+			"Personalizado": "Custom",
+			"Semana atual": "current_week",
+			"Semana passada": "last_week",
+			"Últimas 4 semanas": "last_4_weeks",
+			"Mês passado": "last_month",
+			"Trimestre atual": "current_quarter",
+			"Último trimestre": "last_quarter",
+			"Semestre atual": "current_semester",
+			"Últimos 6 meses": "last_6_months",
+			"Ano atual": "current_year",
+			"Último ano": "last_year",
+		}
+
+		preset_label = st.selectbox("Período pré-definido", preset_options, index=1)
+		preset = preset_map.get(preset_label, "Custom")
 		if preset != "Custom":
 			ps, pe = compute_period_preset(preset)
 			start_input = pd.to_datetime(ps).date()
@@ -289,6 +394,14 @@ def main():
 			if not visible:
 				st.info('Nenhuma transação encontrada para o período e filtro selecionado.')
 			else:
+				# prepare suggestions using rules
+				rules = load_category_rules()
+				from types import SimpleNamespace
+				suggestions = {}
+				for t in visible:
+					obj = SimpleNamespace(**{k: v for k, v in t.items()})
+					suggestions[t['id']] = infer_category_for_transaction(obj, rules)
+
 				# load categories for select options
 				cats = cat_repo.list_all()
 				cat_options = [c['name'] for c in cats]
@@ -316,13 +429,28 @@ def main():
 							c = cat_repo.list_all()
 							cm = {c2['id']: c2['name'] for c2 in c}
 							current_name = cm.get(t.get('category_id'), 'Não categorizado')
-						sel = st.selectbox('', options=cat_options, index=cat_options.index(current_name) if current_name in cat_options else 0, key=key)
+						# if transaction is uncategorized, preselect inferred suggestion when available
+						default_name = current_name
+						if (not t.get('category_id')) or (t.get('category_id') == default_cat_id):
+							sugg = suggestions.get(row_id)
+							if sugg and sugg in cat_options:
+								default_name = sugg
+						sel = st.selectbox('', options=cat_options, index=cat_options.index(default_name) if default_name in cat_options else 0, key=key)
 						selections[row_id] = sel
 						# if create new chosen, show input
 						if sel == 'Criar nova categoria...':
 							nkey = f"cat_new_{row_id}"
 							new = st.text_input('Nome da nova categoria', key=nkey)
 							new_names[row_id] = new
+
+				# action: suggest-only preview done; add admin action to remove category 'Moradia'
+				if st.button("Remover categoria 'Moradia' (remover DB + regras)"):
+					# perform removal
+					removed_db = cat_repo.delete_by_name('Moradia')
+					from application.use_cases import remove_category_rules
+					removed_rules = remove_category_rules('Moradia')
+					st.success(f"Removida do DB: {removed_db}; regras removidas: {removed_rules}")
+					st.experimental_rerun()
 
 				if st.button('Salvar alterações'):
 					applied = 0

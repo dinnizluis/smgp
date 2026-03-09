@@ -41,6 +41,7 @@ _SCHEMA = [
     CREATE TABLE IF NOT EXISTS import_batches (
         id TEXT PRIMARY KEY,
         source TEXT,
+        file_type TEXT,
         rows_parsed INTEGER DEFAULT 0,
         inserted INTEGER DEFAULT 0,
         failed INTEGER DEFAULT 0,
@@ -49,6 +50,15 @@ _SCHEMA = [
     );
     """,
 ]
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    cur = conn.cursor()
+    cur.execute(f"PRAGMA table_info({table})")
+    cols = [r[1] for r in cur.fetchall()]
+    if column not in cols:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        conn.commit()
 
 
 def _ensure_data_dir(db_path: str) -> None:
@@ -80,6 +90,14 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
         for stmt in _SCHEMA:
             cur.executescript(stmt)
         conn.commit()
+        # ensure newer columns exist for migrations
+        try:
+            _ensure_column(conn, 'transactions', 'batch_id', 'TEXT')
+            _ensure_column(conn, 'categories', 'created_from_batch', 'TEXT')
+            _ensure_column(conn, 'import_batches', 'file_type', 'TEXT')
+        except Exception:
+            # best-effort: if migrations fail, continue (DB might be new)
+            pass
     finally:
         conn.close()
 

@@ -179,6 +179,40 @@ def get_sorted_period_category_totals(
     return rows_sorted
 
 
+def remove_category_rules(category_name: str, path: Optional[str] = None) -> int:
+    """Remove rules that suggest `category_name` from the JSON rules file.
+
+    Returns the number of removed rules.
+    """
+    p = Path(path) if path else DEFAULT_RULES_PATH
+    if not p.exists():
+        return 0
+    try:
+        data = []
+        with p.open('r', encoding='utf-8') as f:
+            try:
+                data = json.load(f)
+            except Exception:
+                text = f.read()
+                try:
+                    data = json.loads(text)
+                except Exception:
+                    return 0
+        if not isinstance(data, list):
+            return 0
+        lowered = category_name.lower()
+        new = [r for r in data if str(r.get('category', '')).lower() != lowered]
+        removed = len(data) - len(new)
+        # write back
+        backup = p.with_suffix('.bak')
+        p.rename(backup)
+        with p.open('w', encoding='utf-8') as f:
+            json.dump(new, f, ensure_ascii=False, indent=2)
+        return removed
+    except Exception:
+        return 0
+
+
 def compute_period_preset(preset: str, today: Optional[date] = None) -> (str, str):
     """Return (start_iso, end_iso) for a named preset.
 
@@ -189,6 +223,29 @@ def compute_period_preset(preset: str, today: Optional[date] = None) -> (str, st
 
     if preset == "current_week":
         return _week_start_end_for(today)
+
+    if preset == "last_week":
+        # previous ISO week
+        start = today - timedelta(days=today.weekday()) - timedelta(days=7)
+        end = start + timedelta(days=6)
+        return start.isoformat(), end.isoformat()
+
+    if preset == "current_quarter":
+        # start of current quarter until today
+        m = ((today.month - 1) // 3) * 3 + 1
+        quarter_start = date(today.year, m, 1)
+        return quarter_start.isoformat(), today.isoformat()
+
+    if preset == "current_semester":
+        # start of current semester (Jan 1 or Jul 1) until today
+        if today.month <= 6:
+            sem_start = date(today.year, 1, 1)
+        else:
+            sem_start = date(today.year, 7, 1)
+        return sem_start.isoformat(), today.isoformat()
+
+    if preset == "current_year":
+        return date(today.year, 1, 1).isoformat(), today.isoformat()
 
     if preset == "last_4_weeks":
         # last 28 days ending today
