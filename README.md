@@ -93,5 +93,3 @@ PY
 - O MVP usa `sqlite3` da stdlib para minimizar dependências; migrar para `SQLAlchemy` é uma opção futura.
 
 ---
-
-Se quiser, eu posso adicionar instruções para executar o dashboard sem streamlit (modo headless) ou um Makefile para simplificar os comandos.
